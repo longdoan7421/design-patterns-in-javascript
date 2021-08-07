@@ -1,58 +1,63 @@
-var gulp = require('gulp');
-var fs = require('fs');
-var babelify = require('babelify');
-var browserify = require('browserify');
-var buffer = require('vinyl-buffer');
-var source = require('vinyl-source-stream');
-var sourcemaps = require('gulp-sourcemaps');
-var uglify = require('gulp-uglify');
-var clean = require('gulp-clean');
+const fs = require('fs');
+const gulp = require('gulp');
+const babel = require('gulp-babel');
+const babelify = require('babelify');
+const browserify = require('browserify');
+const buffer = require('vinyl-buffer');
+const source = require('vinyl-source-stream');
+const sourcemaps = require('gulp-sourcemaps');
+const uglify = require('gulp-uglify');
+const del = require('del');
 
 const excludeDirectories = ['node_modules', 'statics', '.git', '.idea', 'common'];
 
-function processOnEachFolder(callback, directory = __dirname) {
+function processOnEachFolder(callback, resolve = undefined, directory = __dirname) {
   fs.readdir(directory, function (err, files) {
-    for(let file of files) {
-      if(excludeDirectories.indexOf(file) === -1) {
+    for (let file of files) {
+      if (excludeDirectories.indexOf(file) === -1) {
         let path = directory + '/' + file;
         fs.stat(path, function (err, stats) {
-          if(stats.isDirectory()) {
+          if (stats.isDirectory()) {
             callback(path);
           }
         });
       }
     }
+
+    resolve && resolve();
   });
 }
 
-gulp.task('clean', function () {
-  var callback = function (path) {
-    gulp.src(path, {read: false})
-      .pipe(clean());
+// TODO: handle async completion
+function clean() {
+  const callback = function (path) {
+    del(path);
   };
 
-  processOnEachFolder(function (path) {
-    fs.stat(path + '/1', function (err, stats) {
-      if(stats && stats.isDirectory) {
-        processOnEachFolder(function (path) {
+  return new Promise(function(resolve, reject) {
+    processOnEachFolder(function (path) {
+      fs.stat(path + '/1', function (err, stats) {
+        if (stats && stats.isDirectory) {
+          processOnEachFolder(function (path) {
+            callback(path + '/dist');
+          }, undefined, path);
+        } else {
           callback(path + '/dist');
-        }, path);
-      } else {
-        callback(path + '/dist');
-      }
-    });
-  });
-});
+        }
+      });
+    }, resolve);
+  })
+}
 
-gulp.task('default', ['clean'], function () {
+// TODO: handle async completion
+function build() {
   function bundle(src, dest) {
-    var bundler = browserify({
+    browserify({
       entries: src,
       debug: true
-    });
-    bundler.transform(babelify);
-
-    bundler.bundle()
+    })
+      .transform(babelify, { presets: ["@babel/preset-env"] })
+      .bundle()
       .on('error', function (err) { console.error(err); })
       .pipe(source('main.js'))
       .pipe(buffer())
@@ -63,18 +68,24 @@ gulp.task('default', ['clean'], function () {
   }
 
   function callback(path) {
-    bundle( path + '/scripts/main.js', path + '/dist/scripts');
+    bundle(path + '/scripts/main.js', path + '/dist/scripts');
   }
 
-  processOnEachFolder(function (path) {
-    fs.stat(path + '/1', function (err, stats) {
-      if(stats && stats.isDirectory) {
-        processOnEachFolder(function (path) {
+  return new Promise(function (resolve, reject) {
+    processOnEachFolder(function (path) {
+      fs.stat(path + '/1', function (err, stats) {
+        if (stats && stats.isDirectory) {
+          processOnEachFolder(function (path) {
+            callback(path);
+          }, undefined, path);
+        } else {
           callback(path);
-        }, path);
-      } else {
-        callback(path);
-      }
-    });
-  });
-});
+        }
+      });
+    }, resolve);
+  })
+}
+
+exports.clean = clean;
+exports.build = build;
+exports.default = gulp.series(clean, build);
